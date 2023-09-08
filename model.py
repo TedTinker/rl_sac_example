@@ -1,7 +1,9 @@
 #%%
 import torch
 import torch.nn as nn
+from torch.distributions import Normal
 from torchinfo import summary as torch_summary
+from math import exp
 
 class Actor(nn.Module):
     """
@@ -22,15 +24,30 @@ class Actor(nn.Module):
             nn.ReLU(),
             nn.Linear(128, 128),
             nn.ReLU(),
-            nn.Linear(128, n_actions),
-            nn.Tanh()
         )
+        
+        self.mu = nn.Sequential(
+            nn.Linear(128, n_actions)
+            )
+        
+        self.std = nn.Sequential(
+            nn.Linear(128, n_actions),
+            nn.Softplus()
+            )
 
     def forward(self, state):
         """
         Forward pass through the network.
         """
-        return 2*self.network(state)
+        x = self.network(state)
+        mu = self.mu(x)
+        std = torch.clamp(self.std(x), min = exp(-20), max = exp(2))
+        e = Normal(0, 1).sample(std.shape).to("cuda" if std.is_cuda else "cpu")
+        x = mu + e * std
+        action = torch.tanh(x)
+        log_prob = Normal(mu, std).log_prob(x) - torch.log(1 - action.pow(2) + 1e-6)
+        log_prob = torch.mean(log_prob, -1).unsqueeze(-1)
+        return 2*action, log_prob
     
     
     
